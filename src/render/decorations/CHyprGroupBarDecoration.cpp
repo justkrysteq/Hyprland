@@ -41,19 +41,26 @@ SDecorationPositioningInfo CHyprGroupBarDecoration::getPositioningInfo() {
     static auto                PSTACKED         = CConfigValue<Config::INTEGER>("group:groupbar:stacked");
     static auto                POUTERGAP        = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
     static auto                PKEEPUPPERGAP    = CConfigValue<Config::INTEGER>("group:groupbar:keep_upper_gap");
+    static auto                PONTOP           = CConfigValue<Config::BOOL>("group:groupbar:on_top");
 
     SDecorationPositioningInfo info;
     info.policy   = DECORATION_POSITION_STICKY;
-    info.edges    = DECORATION_EDGE_TOP;
+    info.edges    = *PONTOP ? DECORATION_EDGE_TOP : DECORATION_EDGE_BOTTOM;
     info.priority = *PPRIORITY;
     info.reserved = true;
 
     if (visible()) {
+        int calcHeight = 0;
         if (*PSTACKED) {
             const auto ONEBARHEIGHT = *POUTERGAP + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0);
-            info.desiredExtents     = {{0, (ONEBARHEIGHT * m_dwGroupMembers.size()) + (*PKEEPUPPERGAP * *POUTERGAP)}, {0, 0}};
+            calcHeight = (ONEBARHEIGHT * m_dwGroupMembers.size()) + (*PKEEPUPPERGAP * *POUTERGAP);
         } else
-            info.desiredExtents = {{0, *POUTERGAP * (1 + *PKEEPUPPERGAP) + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0)}, {0, 0}};
+            calcHeight = *POUTERGAP * (1 + *PKEEPUPPERGAP) + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0);
+
+        if (*PONTOP)
+            info.desiredExtents = {{0, calcHeight}, {0, 0}};
+        else
+            info.desiredExtents = {{0, 0}, {0, calcHeight}};
     } else
         info.desiredExtents = {{0, 0}, {0, 0}};
     return info;
@@ -66,8 +73,6 @@ void CHyprGroupBarDecoration::onPositioningReply(const SDecorationPositioningRep
 eDecorationType CHyprGroupBarDecoration::getDecorationType() {
     return DECORATION_GROUPBAR;
 }
-
-//
 
 void CHyprGroupBarDecoration::updateWindow(PHLWINDOW pWindow) {
     if (!m_window->m_group) {
@@ -126,6 +131,7 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     static auto POUTERGAP                  = CConfigValue<Config::INTEGER>("group:groupbar:gaps_out");
     static auto PINNERGAP                  = CConfigValue<Config::INTEGER>("group:groupbar:gaps_in");
     static auto PKEEPUPPERGAP              = CConfigValue<Config::INTEGER>("group:groupbar:keep_upper_gap");
+    static auto PONTOP                     = CConfigValue<Config::INTEGER>("group:groupbar:on_top");
     static auto PTEXTOFFSET                = CConfigValue<Config::INTEGER>("group:groupbar:text_offset");
     static auto PTEXTPADDING               = CConfigValue<Config::INTEGER>("group:groupbar:text_padding");
     static auto PBLUR                      = CConfigValue<Config::INTEGER>("group:groupbar:blur");
@@ -153,8 +159,8 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         const auto WINDOWINDEX = *PSTACKED ? m_dwGroupMembers.size() - i - 1 : i;
 
         CBox       rect = {ASSIGNEDBOX.x + xoff - pMonitor->m_position.x + m_window->m_floatingOffset.x,
-                           ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - *POUTERGAP - pMonitor->m_position.y + m_window->m_floatingOffset.y, m_barWidth,
-                           *PINDICATORHEIGHT};
+                           ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - (*PONTOP ? *POUTERGAP : -*POUTERGAP) - pMonitor->m_position.y + m_window->m_floatingOffset.y,
+                           m_barWidth, *PINDICATORHEIGHT};
 
         rect.scale(pMonitor->m_scale).round();
 
@@ -522,8 +528,10 @@ std::string CHyprGroupBarDecoration::getDisplayName() {
 }
 
 CBox CHyprGroupBarDecoration::assignedBoxGlobal() {
+    static auto PONTOP = CConfigValue<Config::BOOL>("group:groupbar:on_top");
+
     CBox box = m_assignedBox;
-    box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, m_window));
+    box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(*PONTOP ? DECORATION_EDGE_TOP : DECORATION_EDGE_BOTTOM, m_window));
 
     const auto PWORKSPACE = m_window->m_workspace;
 

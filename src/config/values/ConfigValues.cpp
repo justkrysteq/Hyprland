@@ -464,6 +464,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Int>("group:groupbar:gaps_out", "gap between gradients and window", 2, {.min = 0, .max = 20}),
         MS<Int>("group:groupbar:gaps_in", "gap between gradients", 2, {.min = 0, .max = 20}),
         MS<Bool>("group:groupbar:keep_upper_gap", "keep an upper gap above gradient", true),
+        MS<Bool>("group:groupbar:on_top", "keep an upper gap above gradient", true),
         MS<Int>("group:groupbar:text_offset", "set an offset for a text", 0, {.min = -20, .max = 20}),
         MS<Int>("group:groupbar:text_padding", "set horizontal padding for a text", 0, {.min = 0, .max = 22}),
         MS<Bool>("group:groupbar:blur", "enable background blur for groupbars", false),
