@@ -8,6 +8,7 @@
 #include "../protocols/IdleNotify.hpp"
 #include "../protocols/core/Compositor.hpp"
 #include "../protocols/core/Seat.hpp"
+#include "../protocols/InputCapture.hpp"
 #include "debug/log/Logger.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
 #include "../render/pass/ClearPassElement.hpp"
@@ -288,6 +289,14 @@ void CPointerManager::resetCursorImage(bool apply) {
 void CPointerManager::updateCursorBackend() {
     const auto CURSORBOX = getCursorBoxGlobal();
 
+    const auto damageSoftwareLeftover = [](const SP<SMonitorPointerState>& state, const PHLMONITOR& m) {
+        if (!state->swRendered)
+            return;
+
+        state->swRendered = false;
+        m->addDamage(state->swRenderedBox.copy().expand(4).scale(m->m_scale).round());
+    };
+
     for (auto const& m : State::monitorState()->monitors()) {
         if (!m->m_enabled || !m->m_dpmsStatus) {
             Log::logger->log(Log::TRACE, "Not updating hw cursors: disabled / dpms off display");
@@ -297,10 +306,18 @@ void CPointerManager::updateCursorBackend() {
         auto CROSSES = !m->logicalBox().intersection(CURSORBOX).empty();
         auto state   = stateFor(m);
 
+        // previous display manager might have left a cursor on the plane.
+        // so clear the plane once, even if we never have set it ourselves.
+        if (!state->initialPlaneCleared)
+            state->initialPlaneCleared = state->cursorFrontBuffer ||
+                !(m->m_output->getBackend()->capabilities() & Aquamarine::IBackendImplementation::eBackendCapabilities::AQ_BACKEND_CAPABILITY_POINTER) ||
+                setHWCursorBuffer(state, nullptr);
+
         if (!CROSSES) {
             if (state->cursorFrontBuffer)
                 setHWCursorBuffer(state, nullptr);
 
+            damageSoftwareLeftover(state, m);
             continue;
         }
 
@@ -653,6 +670,8 @@ void CPointerManager::renderSoftwareCursorsFor(PHLMONITOR pMonitor, const Time::
     if (!texture)
         return;
 
+    const auto logicalBox = box.copy();
+
     box.scale(pMonitor->m_scale);
     box.x = std::round(box.x);
     box.y = std::round(box.y);
@@ -662,6 +681,12 @@ void CPointerManager::renderSoftwareCursorsFor(PHLMONITOR pMonitor, const Time::
     data.box = box.round();
 
     g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(std::move(data)));
+
+    // to erase the leftover in updateCursorBackend()
+    if (!forceRender) {
+        state->swRendered    = true;
+        state->swRenderedBox = logicalBox;
+    }
 
     if (m_currentCursorImage.surface)
         m_currentCursorImage.surface->resource()->frame(now);
@@ -806,6 +831,12 @@ void CPointerManager::warpTo(const Vector2D& logical) {
 void CPointerManager::move(const Vector2D& deltaLogical) {
     const auto oldPos = m_pointerPos;
     auto       newPos = oldPos + Vector2D{std::isnan(deltaLogical.x) ? 0.0 : deltaLogical.x, std::isnan(deltaLogical.y) ? 0.0 : deltaLogical.y};
+
+    if (!g_pInputManager->isLocked())
+        PROTO::inputCapture->motion(newPos, deltaLogical);
+
+    if (PROTO::inputCapture->isCaptured())
+        return;
 
     warpTo(newPos);
 }

@@ -7,6 +7,7 @@
 #include "../desktop/view/Window.hpp"
 #include "../desktop/view/LayerSurface.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
+#include "../managers/fullscreen/FullscreenController.hpp"
 #include "../render/Renderer.hpp"
 #include "../event/EventBus.hpp"
 #include "../state/MonitorState.hpp"
@@ -143,7 +144,7 @@ static void handleUpdate(CAnimatedVariable<VarType>& av, bool warp) {
         if (!ws->m_monitor.lock())
             return;
     } else if (auto ls = av.m_Context.pLayer.lock()) {
-        if (!State::monitorState()->query().vec(ls->m_realPosition->goal() + ls->m_realSize->goal() / 2.F).run())
+        if (!State::monitorState()->query().vec(ls->position(Desktop::View::IGeometric::GEOMETRIC_GOAL) + ls->size(Desktop::View::IGeometric::GEOMETRIC_GOAL) / 2.F).run())
             return;
         animationsDisabled = animationsDisabled || ls->m_ruleApplicator->noanim().valueOrDefault();
     }
@@ -235,7 +236,8 @@ void CHyprAnimationManager::tick() {
                 }
             }
             if (!owner) {
-                auto monitor = State::monitorState()->query().vec(ls->m_realPosition->goal() + ls->m_realSize->goal() / 2.F).run();
+                auto monitor =
+                    State::monitorState()->query().vec(ls->position(Desktop::View::IGeometric::GEOMETRIC_GOAL) + ls->size(Desktop::View::IGeometric::GEOMETRIC_GOAL) / 2.F).run();
                 if (!monitor)
                     continue;
                 owners.emplace_back(SDamageOwner{.layer = ls, .monitor = monitor});
@@ -268,7 +270,7 @@ void CHyprAnimationManager::tick() {
         else if (owner.workspace)
             preDamageWorkspace(owner.workspace, owner.monitor);
         else if (owner.layer) {
-            CBox expandBox = CBox{owner.layer->m_realPosition->value(), owner.layer->m_realSize->value()};
+            CBox expandBox = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
             expandBox.expand(5);
             g_pHyprRenderer->damageBox(expandBox);
         }
@@ -327,13 +329,13 @@ void CHyprAnimationManager::tick() {
                 if (owner.layer->m_layer <= 1)
                     owner.monitor->m_blurFBDirty = true;
 
-                CBox expandBox = CBox{owner.layer->m_realPosition->value(), owner.layer->m_realSize->value()};
+                CBox expandBox = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
                 expandBox.expand(5);
                 g_pHyprRenderer->damageBox(expandBox);
             }
         }
 
-        if (!owner.monitor->inFullscreenMode())
+        if (!Fullscreen::controller()->hasFullscreen(owner.monitor))
             owner.monitor->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_ANIMATION);
     }
 

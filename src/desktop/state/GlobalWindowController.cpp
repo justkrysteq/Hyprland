@@ -5,7 +5,7 @@
 #include "../view/Group.hpp"
 #include "../../output/Monitor.hpp"
 #include "../../layout/LayoutManager.hpp"
-#include "../../Compositor.hpp"
+#include "../../managers/fullscreen/FullscreenController.hpp"
 
 using namespace Desktop;
 
@@ -42,16 +42,17 @@ void CGlobalWindowController::moveWindowToWorkspace(PHLWINDOW pWindow, PHLWORKSP
     if (pWindow->m_workspace == pWorkspace)
         return;
 
-    const bool FULLSCREEN     = pWindow->isFullscreen();
-    const auto FULLSCREENMODE = pWindow->m_fullscreenState.internal;
+    const bool FULLSCREEN     = Fullscreen::controller()->isFullscreen(pWindow);
+    const auto FULLSCREENMODE = Fullscreen::controller()->getFullscreenModes(pWindow).internal;
+    const auto LAYOUT_AWARE   = FULLSCREEN ? Fullscreen::controller()->layoutManagedFS(pWindow) : false;
     const bool WASVISIBLE     = pWindow->m_workspace && pWindow->m_workspace->isVisible();
 
     if (FULLSCREEN)
-        g_pCompositor->setWindowFullscreenInternal(pWindow, FSMODE_NONE);
+        Fullscreen::controller()->setFullscreenMode(pWindow, Fullscreen::FSMODE_NONE);
 
     const PHLWINDOW pFirstWindowOnWorkspace   = pWorkspace->getFirstWindow();
     const int       visibleWindowsOnWorkspace = pWorkspace->getWindowCount(true, std::nullopt, true);
-    const auto      POSTOMON                  = pWindow->m_realPosition->goal() - (pWindow->m_monitor ? pWindow->m_monitor->m_position : Vector2D{});
+    const auto      POSTOMON                  = pWindow->position(Desktop::View::IGeometric::GEOMETRIC_GOAL) - (pWindow->m_monitor ? pWindow->m_monitor->m_position : Vector2D{});
     const auto      PWORKSPACEMONITOR         = pWorkspace->m_monitor.lock();
 
     pWindow->moveToWorkspace(pWorkspace);
@@ -76,7 +77,7 @@ void CGlobalWindowController::moveWindowToWorkspace(PHLWINDOW pWindow, PHLWORKSP
     g_layoutManager->newTarget(pWindow->layoutTarget(), pWorkspace->m_space);
 
     if (FULLSCREEN)
-        g_pCompositor->setWindowFullscreenInternal(pWindow, FULLSCREENMODE);
+        Fullscreen::controller()->setFullscreenMode(pWindow, FULLSCREENMODE, std::nullopt, LAYOUT_AWARE);
 
     pWorkspace->updateWindows();
     if (pWindow->m_workspace)

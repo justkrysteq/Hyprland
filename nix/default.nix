@@ -25,6 +25,7 @@
   lcms2,
   libGL,
   libdrm,
+  libei,
   libexecinfo,
   libinput,
   libxcb,
@@ -42,6 +43,7 @@
   pciutils,
   python3,
   re2,
+  sdbus-cpp_2,
   systemd,
   tomlplusplus,
   udis86-hyprland,
@@ -191,6 +193,7 @@ customStdenv.mkDerivation (finalAttrs: {
       libdrm
       libgbm
       libGL
+      libei
       libinput
       libuuid
       libxcursor
@@ -200,6 +203,7 @@ customStdenv.mkDerivation (finalAttrs: {
       pango
       pciutils
       re2
+      sdbus-cpp_2
       tomlplusplus
       udis86-hyprland
       wayland

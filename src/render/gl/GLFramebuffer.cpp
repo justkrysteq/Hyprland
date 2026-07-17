@@ -9,11 +9,12 @@
 using namespace Hyprgraphics::Egl;
 using namespace Render::GL;
 
-CGLFramebuffer::CGLFramebuffer() : IFramebuffer() {}
-CGLFramebuffer::CGLFramebuffer(const std::string& name) : IFramebuffer(name) {}
+CGLFramebuffer::CGLFramebuffer() : IFramebuffer(), m_tempBuf(true) {}
+CGLFramebuffer::CGLFramebuffer(const std::string& name) : IFramebuffer(name), m_tempBuf(true) {}
 
 bool CGLFramebuffer::internalAlloc(int w, int h, uint32_t drmFormat) {
     g_pHyprOpenGL->makeEGLCurrent();
+    m_tempBuf = false;
 
     if (!m_tex) {
         m_tex = g_pHyprRenderer->createTexture();
@@ -42,8 +43,13 @@ bool CGLFramebuffer::internalAlloc(int w, int h, uint32_t drmFormat) {
         glTexImage2D(GL_TEXTURE_2D, 0, format->glInternalFormat ? format->glInternalFormat : format->glFormat, w, h, 0, format->glFormat, format->glType, nullptr);
         glBindFramebuffer(GL_FRAMEBUFFER, m_fb);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_mirrorTex->m_texID, 0);
-    } else
+        GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+        glDrawBuffers(2, drawBuffers);
+    } else {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
+        GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0};
+        glDrawBuffers(1, drawBuffers);
+    }
 
     if (m_stencilTex && m_stencilTex->ok()) {
         m_stencilTex->bind();
@@ -63,7 +69,13 @@ bool CGLFramebuffer::internalAlloc(int w, int h, uint32_t drmFormat) {
     Log::logger->log(Log::DEBUG, "Framebuffer \"{}\" created, status {}", m_name, status);
 
     glBindTexture(GL_TEXTURE_2D, 0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+    // this can run mid frame in enableMirror() in begin() restore the draw fb the renderer had bound
+    if (g_pHyprRenderer && g_pHyprRenderer->m_renderData.currentFB)
+        g_pHyprRenderer->m_renderData.currentFB->bind();
+    else
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
     return true;
 }
@@ -77,8 +89,15 @@ void CGLFramebuffer::addStencil(SP<ITexture> tex) {
 }
 
 void CGLFramebuffer::bind() {
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fb);
+    // temp buffer, created without CGLFramebuffer::internalAlloc.
+    // that means its a temp buffer that we have to raw bind and not change the viewport.
+    // the temp buffer code binds this fb to add attachments themself
+    if (m_tempBuf) {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_fb);
+        return;
+    }
 
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_fb);
     if (g_pHyprOpenGL) {
         const auto& size = g_pHyprRenderer->m_renderData.pMonitor ? g_pHyprRenderer->m_renderData.pMonitor->m_pixelSize : m_size;
         g_pHyprOpenGL->setViewport(0, 0, size.x, size.y);
@@ -96,9 +115,14 @@ void CGLFramebuffer::release() {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         if (m_mirrorTex)
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         glDeleteFramebuffers(1, &m_fb);
+
+        // releasing can happen mid frame from a temp fb, rebind the fb the renderer
+        // had previously bound, otherwise draws continue into fb 0 and raise GL_INVALID_FRAMEBUFFER_OPERATION
+        if (g_pHyprRenderer && g_pHyprRenderer->m_renderData.currentFB && g_pHyprRenderer->m_renderData.currentFB.get() != this)
+            g_pHyprRenderer->m_renderData.currentFB->bind();
+
         m_fbAllocated = false;
         m_fb          = 0;
     }

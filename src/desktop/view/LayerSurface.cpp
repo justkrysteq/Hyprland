@@ -13,6 +13,7 @@
 #include "../../output/Monitor.hpp"
 #include "../../managers/input/InputManager.hpp"
 #include "../../managers/EventManager.hpp"
+#include "../../managers/fullscreen/FullscreenController.hpp"
 #include "../../event/EventBus.hpp"
 #include "../../state/MonitorState.hpp"
 
@@ -33,8 +34,8 @@ PHLLS CLayerSurface::create(SP<CLayerShellResource> resource) {
     pLS->m_popupHead      = CPopup::create(pLS);
 
     Animation::mgr()->createAnimation(0.f, pLS->m_alpha.get(LS_ALPHA_FADE), Config::animationTree()->getAnimationPropertyConfig("fadeLayersIn"), pLS, AVARDAMAGE_ENTIRE);
-    Animation::mgr()->createAnimation(Vector2D(0, 0), pLS->m_realPosition, Config::animationTree()->getAnimationPropertyConfig("layersIn"), pLS, AVARDAMAGE_ENTIRE);
-    Animation::mgr()->createAnimation(Vector2D(0, 0), pLS->m_realSize, Config::animationTree()->getAnimationPropertyConfig("layersIn"), pLS, AVARDAMAGE_ENTIRE);
+    Animation::mgr()->createAnimation(Vector2D(0, 0), pLS->positionAnimation(), Config::animationTree()->getAnimationPropertyConfig("layersIn"), pLS, AVARDAMAGE_ENTIRE);
+    Animation::mgr()->createAnimation(Vector2D(0, 0), pLS->sizeAnimation(), Config::animationTree()->getAnimationPropertyConfig("layersIn"), pLS, AVARDAMAGE_ENTIRE);
 
     pLS->registerCallbacks();
 
@@ -82,6 +83,11 @@ CLayerSurface::CLayerSurface(SP<CLayerShellResource> resource_) : IView(CWLSurfa
 CLayerSurface::~CLayerSurface() {
     if (m_wlSurface)
         m_wlSurface->unassign();
+
+    // the monitorState() is destroyed before the renderer during compositor cleanup,
+    // and render pass elements can keep this object alive until the renderer dies
+    if (!State::monitorState())
+        return;
 
     for (auto const& mon : State::monitorState()->allMonitors()) {
         for (auto& lsl : mon->m_layerSurfaceLayers) {
@@ -322,7 +328,7 @@ void CLayerSurface::onCommit() {
             m_aboveFullscreen = NEW_LAYER >= ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
 
             // if in fullscreen, only overlay can be above.
-            *m_alpha.get(LS_ALPHA_FADE) = PMONITOR->inFullscreenMode() ? (m_layer >= ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ? 1.F : 0.F) : 1.F;
+            *m_alpha.get(LS_ALPHA_FADE) = Fullscreen::controller()->hasFullscreen(PMONITOR) ? (m_layer >= ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY ? 1.F : 0.F) : 1.F;
 
             if (m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND || m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM)
                 PMONITOR->m_blurFBDirty = true; // so that blur is recalc'd

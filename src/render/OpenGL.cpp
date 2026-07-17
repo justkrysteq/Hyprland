@@ -758,18 +758,12 @@ void CHyprOpenGLImpl::begin(PHLMONITOR pMonitor, const CRegion& damage_, SP<IFra
     g_pHyprRenderer->m_renderData.outFB  = fb ? fb : dc<CHyprGLRenderer*>(g_pHyprRenderer.get())->m_currentRenderbuffer->getFB();
 
     if UNLIKELY (g_pHyprRenderer->m_renderData.pMonitor->needsUnmodifiedCopy() && !m_fakeFrame) {
-        if (!g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex) {
-            GLenum buffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-            glDrawBuffers(2, buffers);
+        if (!g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex)
             g_pHyprRenderer->m_renderData.pMonitor->resources()->enableMirror();
-        }
         g_pHyprRenderer->m_renderData.mainFB->enableMirror(g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex);
     } else {
-        if (g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex) {
-            GLenum buffers[] = {GL_COLOR_ATTACHMENT0};
-            glDrawBuffers(1, buffers);
+        if (g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex)
             g_pHyprRenderer->m_renderData.pMonitor->resources()->disableMirror();
-        }
         g_pHyprRenderer->m_renderData.mainFB->disableMirror();
     }
 
@@ -1684,6 +1678,16 @@ void CHyprOpenGLImpl::renderTextureMatte(SP<ITexture> tex, const CBox& box, SP<I
     tex->unbind();
 }
 
+static SCMSettings blurIntermediateCMSettings(bool toIntermediate) {
+    const auto WORKBUFFER   = g_pHyprRenderer->workBufferImageDescription();
+    const auto INTERMEDIATE = getDefaultImageDescription();
+
+    auto       settings = toIntermediate ? g_pHyprRenderer->getCMSettings(WORKBUFFER, INTERMEDIATE) : g_pHyprRenderer->getCMSettings(INTERMEDIATE, WORKBUFFER);
+    auto&      range    = toIntermediate ? settings.dstTFRange : settings.srcTFRange;
+    range.max           = std::max(range.max, sc<float>(WORKBUFFER->value().luminances.max));
+    return settings;
+}
+
 // This probably isn't the fastest
 // but it works... well, I guess?
 //
@@ -1745,7 +1749,9 @@ SP<IFramebuffer> CHyprOpenGLImpl::blurFramebufferWithDamage(float a, CRegion* or
         const bool skipCM = !m_cmSupported || !g_pHyprRenderer->workBufferImageDescription()->needsCM(getDefaultImageDescription());
         if (!skipCM) {
             shader = useShader(getShaderVariant(SH_FRAG_BLURPREPARE, SH_FEAT_CM));
-            passCMUniforms(shader, g_pHyprRenderer->workBufferImageDescription(), getDefaultImageDescription());
+
+            passCMUniforms(shader, g_pHyprRenderer->workBufferImageDescription(), getDefaultImageDescription(), false, -1.F, -1,
+                           blurIntermediateCMSettings(/* toIntermediate */ true));
             shader->setUniformFloat(SHADER_SDR_SATURATION,
                                     m_renderData.pMonitor->m_sdrSaturation > 0 &&
                                             g_pHyprRenderer->workBufferImageDescription()->value().transferFunction == NColorManagement::CM_TRANSFER_FUNCTION_ST2084_PQ ?
@@ -1866,7 +1872,9 @@ SP<IFramebuffer> CHyprOpenGLImpl::blurFramebufferWithDamage(float a, CRegion* or
         const bool skipCM = !m_cmSupported || !g_pHyprRenderer->workBufferImageDescription()->needsCM(getDefaultImageDescription());
         if (!skipCM) {
             shader = useShader(getShaderVariant(SH_FRAG_BLURFINISH, SH_FEAT_CM));
-            passCMUniforms(shader, getDefaultImageDescription(), g_pHyprRenderer->workBufferImageDescription());
+
+            passCMUniforms(shader, getDefaultImageDescription(), g_pHyprRenderer->workBufferImageDescription(), false, -1.F, -1,
+                           blurIntermediateCMSettings(/* toIntermediate */ false));
             shader->setUniformFloat(SHADER_SDR_SATURATION,
                                     m_renderData.pMonitor->m_sdrSaturation > 0 &&
                                             g_pHyprRenderer->workBufferImageDescription()->value().transferFunction == NColorManagement::CM_TRANSFER_FUNCTION_ST2084_PQ ?
