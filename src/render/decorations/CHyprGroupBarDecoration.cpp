@@ -56,14 +56,14 @@ SDecorationPositioningInfo CHyprGroupBarDecoration::getPositioningInfo() {
             const auto ONEBARHEIGHT = *POUTERGAP + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0);
             calcHeight = (ONEBARHEIGHT * m_dwGroupMembers.size()) + (*PKEEPUPPERGAP * *POUTERGAP);
         } else
-            calcHeight = *POUTERGAP * (1 + *PKEEPUPPERGAP) + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0);
+            calcHeight = (*POUTERGAP * (1 + *PKEEPUPPERGAP)) + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0);
 
         if (*PONTOP)
-            info.desiredExtents = {{0, calcHeight}, {0, 0}};
+            info.desiredExtents = {.topLeft={0, calcHeight}, .bottomRight={0, 0}};
         else
-            info.desiredExtents = {{0, 0}, {0, calcHeight}};
+            info.desiredExtents = {.topLeft={0, 0}, .bottomRight={0, calcHeight}};
     } else
-        info.desiredExtents = {{0, 0}, {0, 0}};
+        info.desiredExtents = {.topLeft={0, 0}, .bottomRight={0, 0}};
     return info;
 }
 
