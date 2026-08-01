@@ -21,7 +21,7 @@ static bool spawnLayer(const std::string& namespace_, const std::vector<std::str
 
 static std::string getLayerLine(const std::string& layers, const std::string& target) {
 
-    auto pos = layers.find("namespace: " + target);
+    auto pos = layers.find(std::format("namespace: {}", target));
     if (pos == std::string::npos)
         return "";
 
@@ -121,4 +121,19 @@ TEST_CASE(layerVisibilityOnFs) {
         EXPECT_CONTAINS(str, "a: 1")
         EXPECT_CONTAINS(getFromSocket("/activewindow"), "fullscreen: 0");
     }
+}
+
+TEST_CASE(windowRefocusRestoresKeyboardFocusAfterSurfaceFocusCleared) {
+    static constexpr const char* WINDOW_CLASS = "keyboard_refocus_target";
+
+    OK(getFromSocket("/dispatch hl.dsp.focus({ workspace = '1' })"));
+    ASSERT(!!Tests::spawnKitty(WINDOW_CLASS), true);
+    OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ window = 'class:{}' }})", WINDOW_CLASS)));
+    ASSERT_CONTAINS(getFromSocket("/activewindow"), std::format("class: {}\n", WINDOW_CLASS));
+    OK(getFromSocket(std::format("/eval hl.plugin.test.check_keyboard_focus_window('{}')", WINDOW_CLASS)));
+
+    OK(getFromSocket("/eval hl.plugin.test.clear_surface_focus()"));
+    OK(getFromSocket(std::format("/eval hl.plugin.test.window_soft_focus('{}')", WINDOW_CLASS)));
+
+    OK(getFromSocket(std::format("/eval hl.plugin.test.check_keyboard_focus_window('{}')", WINDOW_CLASS)));
 }

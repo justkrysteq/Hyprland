@@ -7,7 +7,7 @@
 #include <algorithm>
 #include "../../config/ConfigValue.hpp"
 #include "../../config/shared/actions/ConfigActions.hpp"
-#include "../../config/legacy/ConfigManager.hpp"
+#include "../../config/ConfigManager.hpp"
 
 #include "../../desktop/view/WLSurface.hpp"
 #include "../../desktop/state/FocusState.hpp"
@@ -41,7 +41,7 @@
 #include "../../managers/KeybindManager.hpp"
 #include "../../managers/fullscreen/FullscreenController.hpp"
 
-#include "../../managers/EventManager.hpp"
+#include "../../ipc/s2/S2.hpp"
 #include "../../managers/permissions/DynamicPermissionManager.hpp"
 #include "../../state/MonitorState.hpp"
 #include "../../state/MonitorLayoutController.hpp"
@@ -346,10 +346,22 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     if (PMONITOR != Desktop::focusState()->monitor() && (*PMOUSEFOCUSMON || refocus) && m_forcedFocus.expired())
         Desktop::focusState()->rawMonitorFocus(PMONITOR);
 
+    // IME popups essentially always exist on the top - they are transient,
+    // and pretty much always need to be visible and accessible.
+    if (!foundSurface) {
+        auto popup = g_pInputManager->m_relay.popupFromCoords(mouseCoords);
+        if (popup) {
+            foundSurface = popup->getSurface();
+            surfacePos   = popup->globalBox().pos();
+        }
+    }
+
     // check for windows that have focus priority like our permission popups
-    pFoundWindow = Desktop::viewState()->hitTest().windowAt(mouseCoords, Desktop::View::FOCUS_PRIORITY);
-    if (pFoundWindow)
-        foundSurface = Desktop::viewState()->hitTest().windowSurfaceAt(mouseCoords, pFoundWindow, surfaceCoords);
+    if (!foundSurface) {
+        pFoundWindow = Desktop::viewState()->hitTest().windowAt(mouseCoords, Desktop::View::FOCUS_PRIORITY);
+        if (pFoundWindow)
+            foundSurface = Desktop::viewState()->hitTest().windowSurfaceAt(mouseCoords, pFoundWindow, surfaceCoords);
+    }
 
     if (!foundSurface && g_pSessionLockManager->isSessionLocked()) {
 
@@ -456,15 +468,6 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     if (!foundSurface)
         foundSurface =
             Desktop::viewState()->hitTest().layerSurfaceAt(mouseCoords, &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], &surfaceCoords, &pFoundLayerSurface);
-
-    // also IME popups
-    if (!foundSurface) {
-        auto popup = g_pInputManager->m_relay.popupFromCoords(mouseCoords);
-        if (popup) {
-            foundSurface = popup->getSurface();
-            surfacePos   = popup->globalBox().pos();
-        }
-    }
 
     // also top layers
     if (!foundSurface)
@@ -944,7 +947,7 @@ void CInputManager::processMouseDownKill(const IPointer::SButtonEvent& e) {
                 break;
             }
 
-            g_pEventManager->postEvent(SHyprIPCEvent({.event = "kill", .data = std::format("{:x}", rc<uintptr_t>(PWINDOW.m_data))}));
+            IPC::Socket2::sock()->postEvent({.event = "kill", .data = std::format("{:x}", rc<uintptr_t>(PWINDOW.m_data))});
             Event::bus()->m_events.window.kill.emit(PWINDOW);
 
             // kill the mf
@@ -1180,7 +1183,7 @@ void CInputManager::setupKeyboard(SP<IKeyboard> keeb) {
             g_pKeybindManager->m_keyToCodeCache.clear();
         }
 
-        g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", PKEEB->m_hlName + "," + LAYOUT});
+        IPC::Socket2::sock()->postEvent({"activelayout", std::format("{},{}", PKEEB->m_hlName, LAYOUT)});
         Event::bus()->m_events.input.keyboard.layout.emit(PKEEB, LAYOUT);
     });
 
@@ -1281,7 +1284,7 @@ void CInputManager::applyConfigToKeyboard(SP<IKeyboard> pKeyboard) {
 
     const auto LAYOUTSTR = pKeyboard->getActiveLayout();
 
-    g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", pKeyboard->m_hlName + "," + LAYOUTSTR});
+    IPC::Socket2::sock()->postEvent({"activelayout", std::format("{},{}", pKeyboard->m_hlName, LAYOUTSTR)});
     Event::bus()->m_events.input.keyboard.layout.emit(pKeyboard, LAYOUTSTR);
 
     Log::logger->log(Log::DEBUG, "Set the keyboard layout to {} and variant to {} for keyboard \"{}\"", pKeyboard->m_currentRules.layout, pKeyboard->m_currentRules.variant,
@@ -1691,8 +1694,10 @@ void CInputManager::onKeyboardMod(SP<IKeyboard> pKeyboard) {
     if (*PSENDMOD) {
         PROTO::inputCapture->modifiers(MODS.depressed, MODS.latched, MODS.locked, MODS.group);
 
-        if (PROTO::inputCapture->isCaptured())
+        if (PROTO::inputCapture->isCaptured()) {
+            m_lastMods = shareModsFromAllKBs(MODS.depressed);
             return;
+        }
     }
 
     // use merged mods states when sending to ime or when sending to seat with no ime
@@ -1720,7 +1725,7 @@ void CInputManager::onKeyboardMod(SP<IKeyboard> pKeyboard) {
 
         Log::logger->log(Log::DEBUG, "LAYOUT CHANGED TO {} GROUP {}", LAYOUT, MODS.group);
 
-        g_pEventManager->postEvent(SHyprIPCEvent{"activelayout", pKeyboard->m_hlName + "," + LAYOUT});
+        IPC::Socket2::sock()->postEvent({"activelayout", std::format("{},{}", pKeyboard->m_hlName, LAYOUT)});
         Event::bus()->m_events.input.keyboard.layout.emit(pKeyboard, LAYOUT);
     }
 }
@@ -2113,7 +2118,9 @@ std::string CInputManager::getNameForNewDevice(std::string internalName) {
     auto proposedNewName = deviceNameToInternalString(internalName);
     int  dupeno          = 0;
 
-    auto makeNewName = [&]() { return (proposedNewName.empty() ? "unknown-device" : proposedNewName) + (dupeno == 0 ? "" : ("-" + std::to_string(dupeno))); };
+    auto makeNewName = [&]() {
+        return std::format("{}{}", proposedNewName.empty() ? "unknown-device" : proposedNewName, dupeno == 0 ? std::string{} : std::format("-{}", dupeno));
+    };
 
     while (std::ranges::find_if(m_hids, [&](const auto& other) { return other->m_hlName == makeNewName(); }) != m_hids.end())
         dupeno++;

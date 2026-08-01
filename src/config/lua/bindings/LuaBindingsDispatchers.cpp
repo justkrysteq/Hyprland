@@ -376,10 +376,12 @@ static std::expected<uint32_t, std::string> resolveKeycode(const std::string& ke
         return g_pKeybindManager->m_keyToCodeCache[KEYPAIRSTRING];
 
     xkb_keymap*   km          = KB->m_xkbKeymap;
-    xkb_state*    ks          = KB->m_xkbState;
+    xkb_state*    ks          = xkb_state_new(km);
     xkb_keycode_t keycode_min = xkb_keymap_min_keycode(km);
     xkb_keycode_t keycode_max = xkb_keymap_max_keycode(km);
     uint32_t      keycode     = 0;
+
+    xkb_state_update_mask(ks, 0, 0, 0, 0, 0, KB->m_modifiersState.group);
 
     for (xkb_keycode_t kc = keycode_min; kc <= keycode_max; ++kc) {
         xkb_keysym_t sym = xkb_state_key_get_one_sym(ks, kc);
@@ -388,6 +390,8 @@ static std::expected<uint32_t, std::string> resolveKeycode(const std::string& ke
             g_pKeybindManager->m_keyToCodeCache[KEYPAIRSTRING] = keycode;
         }
     }
+
+    xkb_state_unref(ks);
 
     if (!keycode)
         return std::unexpected("key not found");
@@ -689,7 +693,7 @@ static int dsp_mouseResize(lua_State* L) {
     if (!keepAspectRatio)
         return Internal::configError(L, std::format("resize: bad argument 1: {}", keepAspectRatio.error()));
 
-    return Internal::checkResult(L, CA::mouse("resizewindow " + *keepAspectRatio));
+    return Internal::checkResult(L, CA::mouse(std::format("resizewindow {}", *keepAspectRatio)));
 }
 
 static int hlWindowClose(lua_State* L) {
@@ -1202,7 +1206,7 @@ static int hlNoop(lua_State* L) {
 
 static int dsp_toggleSpecial(lua_State* L) {
     std::string name                                   = lua_isnil(L, lua_upvalueindex(1)) ? "" : lua_tostring(L, lua_upvalueindex(1));
-    const auto& [workspaceID, workspaceName, isAutoID] = getWorkspaceIDNameFromString("special:" + name);
+    const auto& [workspaceID, workspaceName, isAutoID] = getWorkspaceIDNameFromString(std::format("special:{}", name));
     if (workspaceID == WORKSPACE_INVALID || !State::workspaceState()->isSpecial(workspaceID))
         return Internal::dispatcherError(L, "Invalid special workspace", ERR, C_INVARG);
 

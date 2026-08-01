@@ -491,14 +491,15 @@ void SScrollingData::recalculate(bool forceInstant) {
     for (size_t i = 0; i < columns.size(); ++i) {
         const auto& COL = columns[i];
         // Not necessarily covering
-        const bool COL_HAS_FS_TARGET =
-            COL->targetDatas.size() == 1 && COL->targetDatas.at(0)->target && algorithm->m_scrollingFullscreenHandler->isFullscreen(COL->targetDatas.at(0)->target.lock());
+        const bool COL_HAS_FS_TARGET = COL->targetDatas.size() == 1 && COL->targetDatas.at(0)->target &&
+            algorithm->m_scrollingFullscreenHandler->isFullscreen(COL->targetDatas.at(0)->target.lock(), std::nullopt, std::nullopt);
 
         for (size_t j = 0; j < COL->targetDatas.size(); ++j) {
-            const auto TDATA            = COL->targetDatas[j];
-            const auto TARGET           = TDATA->target.lock();
-            const auto TARGET_WORKSPACE = TARGET ? TARGET->workspace() : nullptr;
-            const auto TARGET_FS_MODE   = algorithm->m_scrollingFullscreenHandler->getFullscreenModes(TDATA->target.lock()).internal;
+            const auto TDATA                      = COL->targetDatas[j];
+            const auto TARGET                     = TDATA->target.lock();
+            const auto TARGET_WORKSPACE           = TARGET ? TARGET->workspace() : nullptr;
+            const auto TARGET_FS_MODE             = algorithm->m_scrollingFullscreenHandler->getFullscreenModes(TDATA->target.lock()).internal;
+            bool       targetIsCoveringFullscreen = false;
 
             if (COL_HAS_FS_TARGET) {
                 if (TARGET_FS_MODE == Fullscreen::FSMODE_FULLSCREEN) {
@@ -507,6 +508,7 @@ void SScrollingData::recalculate(bool forceInstant) {
                         TDATA->layoutBox                     = MONBOX;
                         currentFsTdata                       = TDATA;
                         targetWorkspaceHasCoveringFullscreen = true;
+                        targetIsCoveringFullscreen           = true;
                     }
                     // Target is non-covering fullscreen
                     else {
@@ -525,6 +527,7 @@ void SScrollingData::recalculate(bool forceInstant) {
                         TDATA->layoutBox                     = WORKAREA;
                         currentFsTdata                       = TDATA;
                         targetWorkspaceHasCoveringFullscreen = true;
+                        targetIsCoveringFullscreen           = true;
                     }
                     // Target is non-covering Maximied
                     else {
@@ -545,7 +548,7 @@ void SScrollingData::recalculate(bool forceInstant) {
                 TDATA->layoutBox = controller->calculateTargetBox(i, j, USABLE, WORKAREA.pos(), *PFSONONE);
 
             if (TDATA->target) {
-                if (targetWorkspaceHasCoveringFullscreen)
+                if (targetIsCoveringFullscreen)
                     Fullscreen::controller()->m_windowPosSettingQueued = true;
                 // must set pos of the highest level target (i.e. if target a part of a group, must set that group's pos which will set the pos of all member targets)
                 TDATA->target->setPositionGlobal(targetBoxWithGaps(TDATA->layoutBox, i, j, COL_HAS_FS_TARGET && TARGET_FS_MODE == Fullscreen::FSMODE_FULLSCREEN));
@@ -783,7 +786,7 @@ void CScrollingAlgorithm::removeTarget(SP<ITarget> target) {
         return;
 
     // remove the FS state of a tiled window when it is being removed/floated -- This exception needs to exist for the float case as it's default handled
-    if (m_scrollingFullscreenHandler->isFullscreen(target))
+    if (m_scrollingFullscreenHandler->isFullscreen(target, std::nullopt, std::nullopt))
         Fullscreen::controller()->setFullscreenMode(target->window(), Fullscreen::FSMODE_NONE);
 
     if (!m_scrollingData->next(DATA->column.lock()) && DATA->column->targetDatas.size() <= 1) {
@@ -912,8 +915,8 @@ void CScrollingAlgorithm::resizeTarget(const Vector2D& delta, SP<ITarget> target
             float nextSize = CURR_COLUMN->getTargetSize(NEXT_TD);
             float currSize = CURR_COLUMN->getTargetSize(CURR_TD);
 
-            if (!(nextSize <= MIN_ROW_HEIGHT && delta.y >= 0)) {
-                float adjust = std::clamp((float)(delta.y / USABLE.h), (-currSize + MIN_ROW_HEIGHT), (nextSize - MIN_ROW_HEIGHT));
+            if (!(nextSize <= MIN_ROW_HEIGHT && modDelta.y >= 0)) {
+                float adjust = std::clamp((float)(modDelta.y / USABLE.h), (-currSize + MIN_ROW_HEIGHT), (nextSize - MIN_ROW_HEIGHT));
 
                 CURR_COLUMN->setTargetSize(NEXT_TD, std::clamp(nextSize - adjust, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT));
                 CURR_COLUMN->setTargetSize(CURR_TD, std::clamp(currSize + adjust, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT));

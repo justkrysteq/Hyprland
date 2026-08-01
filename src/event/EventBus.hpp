@@ -26,8 +26,7 @@ namespace Event {
 
     struct SViewDestroyEvent {
         PHLVIEWREF               view;
-        Desktop::View::eViewType type    = Desktop::View::VIEW_TYPE_WINDOW;
-        uintptr_t                address = 0;
+        Desktop::View::eViewType type = Desktop::View::VIEW_TYPE_WINDOW;
     };
 
     class CEventBus {
@@ -78,6 +77,7 @@ namespace Event {
                 Event<PHLWINDOW>                        create;
                 Event<PHLWINDOW>                        open;
                 Event<PHLWINDOW>                        openEarly;
+                Event<PHLWINDOW>                        openLate;
                 Event<PHLWINDOWREF>                     destroy;
                 Event<PHLWINDOW>                        close;
                 Event<PHLWINDOW>                        kill;

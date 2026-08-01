@@ -6,7 +6,7 @@
 #include <cmath>
 #include <filesystem>
 #include "../config/ConfigValue.hpp"
-#include "../config/legacy/ConfigManager.hpp"
+#include "../config/ConfigManager.hpp"
 #include "../pointer/cursor/CursorManager.hpp"
 #include "../pointer/PointerManager.hpp"
 #include "../managers/input/InputManager.hpp"
@@ -632,7 +632,7 @@ void IHyprRenderer::renderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor, const T
     // if window is floating and we have a slide animation, clip it to its full bb
     if (!ignorePosition && pWindow->m_isFloating && !Fullscreen::controller()->isFullscreen(pWindow) && PWORKSPACE->m_renderOffset->isBeingAnimated() && !pWindow->m_pinned) {
         CRegion rg =
-            pWindow->getFullWindowBoundingBox().translate(-pMonitor->m_position + PWORKSPACE->m_renderOffset->value() + pWindow->m_floatingOffset).scale(pMonitor->m_scale);
+            pWindow->getFullWindowBoundingBox().translate(-pMonitor->m_position + PWORKSPACE->m_renderOffset->value() + pWindow->m_floatingOffset).scale(pMonitor->m_scale).round();
         renderdata.clipBox = rg.getExtents();
     }
 
@@ -649,9 +649,7 @@ void IHyprRenderer::renderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor, const T
             passRedirect    = redirectPass(transformedPass.get());
             renderdata.blur = false;
 
-            for (auto const& t : pWindow->m_transformers) {
-                t->preWindowRender(&renderdata);
-            }
+            pWindow->m_transformers.preWindowRender(&renderdata);
         }
 
         if (renderdata.decorate) {
@@ -722,12 +720,11 @@ void IHyprRenderer::renderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor, const T
 
             CBox currentBox = pWindow->getFullWindowBoundingBox();
             currentBox.translate((pWindow->m_pinned ? Vector2D{} : PWORKSPACE->m_renderOffset->value()) + pWindow->m_floatingOffset - pMonitor->m_position);
+            CBox            transformedBox = pWindow->m_transformers.transformedExtents(currentBox);
 
             SMotionBlurData windowMotionBlur;
             if (!standalone && !m_bRenderingSnapshot) {
-                for (auto const& t : pWindow->m_transformers) {
-                    t->amendTransformedRenderData(currentBox, &windowMotionBlur);
-                }
+                pWindow->m_transformers.amendTransformedRenderData(transformedBox, &windowMotionBlur);
             }
 
             CBox blurBox = {renderdata.pos.x - pMonitor->m_position.x, renderdata.pos.y - pMonitor->m_position.y, renderdata.w, renderdata.h};
@@ -742,7 +739,10 @@ void IHyprRenderer::renderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor, const T
                 .blurA             = renderdata.fadeAlpha,
                 .blurRound         = renderdata.dontRound ? 0 : std::max(renderdata.rounding - 1, 0),
                 .blurRoundingPower = renderdata.roundingPower,
+                .transformedBox    = transformedBox,
                 .motionBlur        = windowMotionBlur,
+                .standalone        = standalone,
+                .renderingSnapshot = m_bRenderingSnapshot,
             }));
 
             renderdata.blur = windowBlur;
@@ -968,7 +968,7 @@ void IHyprRenderer::renderLayer(PHLLS pLayer, PHLMONITOR pMonitor, const Time::s
     renderdata.pLS                              = pLayer;
     renderdata.blockBlurOptimization            = pLayer->m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM || pLayer->m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
 
-    renderdata.clipBox = CBox{0, 0, pMonitor->m_size.x, pMonitor->m_size.y}.scale(pMonitor->m_scale);
+    renderdata.clipBox = CBox{0, 0, pMonitor->m_size.x, pMonitor->m_size.y}.scale(pMonitor->m_scale).round();
     if (renderdata.blur && pLayer->m_ruleApplicator->ignoreAlpha().hasValue()) {
         renderdata.discardMode |= DISCARD_ALPHA;
         renderdata.discardOpacity = pLayer->m_ruleApplicator->ignoreAlpha().valueOrDefault();
@@ -1236,11 +1236,6 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
     }
     renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_LAYER_TOP);
 
-    // Render IME popups
-    for (auto const& imep : g_pInputManager->m_relay.m_inputMethodPopups) {
-        renderIMEPopup(imep.get(), pMonitor, time);
-    }
-
     for (auto const& ls : pMonitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY]) {
         renderLayer(ls.lock(), pMonitor, time);
     }
@@ -1254,6 +1249,40 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
     renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_POPUP);
 
     renderDragIcon(pMonitor, time);
+}
+
+void IHyprRenderer::renderIME(PHLMONITOR pMonitor, const Time::steady_tp& now, const CBox& geometry) {
+    Vector2D translate = {geometry.x, geometry.y};
+    float    scale     = sc<float>(geometry.width) / pMonitor->m_pixelSize.x;
+
+    TRACY_GPU_ZONE("RenderIME");
+
+    if (!DELTALESSTHAN(sc<double>(geometry.width) / sc<double>(geometry.height), pMonitor->m_pixelSize.x / pMonitor->m_pixelSize.y, 0.01)) {
+        Log::logger->log(Log::ERR, "Ignoring geometry in renderIME: aspect ratio mismatch");
+        scale     = 1.f;
+        translate = Vector2D{};
+    }
+
+    SRenderModifData RENDERMODIFDATA;
+    if (translate != Vector2D{0, 0})
+        RENDERMODIFDATA.modifs.emplace_back(SRenderModifData::eRenderModifType::RMOD_TYPE_TRANSLATE, translate);
+    if UNLIKELY (scale != 1.f)
+        RENDERMODIFDATA.modifs.emplace_back(SRenderModifData::eRenderModifType::RMOD_TYPE_SCALE, scale);
+
+    if UNLIKELY (!RENDERMODIFDATA.modifs.empty())
+        m_renderPass.add(makeUnique<CRendererHintsPassElement>(CRendererHintsPassElement::SData{RENDERMODIFDATA}));
+
+    CScopeGuard x([&RENDERMODIFDATA] {
+        if (!RENDERMODIFDATA.modifs.empty()) {
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CRendererHintsPassElement>(CRendererHintsPassElement::SData{SRenderModifData{}}));
+        }
+    });
+
+    // Render IME popups above everything
+    for (auto const& imep : g_pInputManager->m_relay.m_inputMethodPopups) {
+        if (imep->shouldBeRendered())
+            renderIMEPopup(imep.get(), pMonitor, now);
+    }
 }
 
 SP<ITexture> IHyprRenderer::getBackground(PHLMONITOR pMonitor) {
@@ -1448,7 +1477,7 @@ void IHyprRenderer::requestBackgroundResource() {
 std::string IHyprRenderer::resolveAssetPath(const std::string& filename) {
     std::string fullPath;
     for (auto& e : ASSET_PATHS) {
-        std::string     p = std::string{e} + "/hypr/" + filename;
+        std::string     p = std::format("{}/hypr/{}", e, filename);
         std::error_code ec;
         if (std::filesystem::exists(p, ec)) {
             fullPath = p;
@@ -2039,7 +2068,9 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
             pMonitor->m_activeWorkspace->m_space->recalculate(Layout::RECALCULATE_REASON_RENDER_MONITOR);
     }
 
-    if (!pMonitor->m_output->needsFrame && pMonitor->m_forceFullFrames == 0)
+    // needsFrame can be cleared by commits that didnt consume our damage like a
+    // commit while a pageflip was in flight, so pending damage must keep the frame alive.
+    if (!pMonitor->m_output->needsFrame && pMonitor->m_forceFullFrames == 0 && !pMonitor->m_damage.hasChanged())
         return;
 
     // tearing and DS first
@@ -2142,8 +2173,10 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
         } else {
             CBox renderBox = {0, 0, sc<int>(pMonitor->m_pixelSize.x), sc<int>(pMonitor->m_pixelSize.y)};
             renderWorkspace(pMonitor, pMonitor->m_activeWorkspace, NOW, renderBox);
-
             renderLockscreen(pMonitor, NOW, renderBox);
+
+            // render IME even above the lockscreen - allow the user to use it to potentially input stuff on it.
+            renderIME(pMonitor, NOW, renderBox);
 
             if (pMonitor == Desktop::focusState()->monitor()) {
                 Notification::overlay()->draw(pMonitor);
@@ -2214,8 +2247,6 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
     if (!pMonitor->m_mirrors.empty())
         damageMirrorsWith(pMonitor, frameDamage);
 
-    pMonitor->m_renderingActive = false;
-
     Event::bus()->m_events.render.stage.emit(RENDER_POST);
 
     pMonitor->m_output->state->addDamage(frameDamage);
@@ -2225,6 +2256,9 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
 
     if (commit)
         commitPendingAndDoExplicitSync(pMonitor);
+
+    // cleared only after the commit
+    pMonitor->m_renderingActive = false;
 
     if (shouldTear)
         pMonitor->m_tearingState.busy = true;
@@ -2729,11 +2763,12 @@ void IHyprRenderer::damageWindow(PHLWINDOW pWindow, bool forceFull) {
     if (PWINDOWWORKSPACE && PWINDOWWORKSPACE->m_renderOffset->isBeingAnimated() && !pWindow->m_pinned)
         windowBox.translate(PWINDOWWORKSPACE->m_renderOffset->value());
     windowBox.translate(pWindow->m_floatingOffset);
+    windowBox = pWindow->m_transformers.transformBoxForDamage(windowBox);
 
     for (auto const& m : State::monitorState()->monitors()) {
         if (forceFull || shouldRenderWindow(pWindow, m)) { // only damage if window is rendered on monitor
             CBox fixedDamageBox = {windowBox.x - m->m_position.x, windowBox.y - m->m_position.y, windowBox.width, windowBox.height};
-            fixedDamageBox.scale(m->m_scale);
+            fixedDamageBox.scale(m->m_scale).round();
             m->addDamage(fixedDamageBox);
         }
     }
@@ -2961,8 +2996,7 @@ std::tuple<float, float, float> IHyprRenderer::getRenderTimes(PHLMONITOR pMonito
 
 static int handleCrashLoop(void* data) {
 
-    Notification::overlay()->addNotification("Hyprland will crash in " + std::to_string(10 - sc<int>(g_pHyprRenderer->m_crashingDistort * 2.f)) + "s.", CHyprColor(0), 5000,
-                                             ICON_INFO);
+    Notification::overlay()->addNotification(std::format("Hyprland will crash in {}s.", 10 - sc<int>(g_pHyprRenderer->m_crashingDistort * 2.f)), CHyprColor(0), 5000, ICON_INFO);
 
     g_pHyprRenderer->m_crashingDistort += 0.5f;
 

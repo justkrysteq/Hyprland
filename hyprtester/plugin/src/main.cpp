@@ -125,16 +125,7 @@ class CTestKeyboard : public IKeyboard {
     }
 
     void setMods(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
-        m_modifiersState.depressed = depressed;
-        m_modifiersState.latched   = latched;
-        m_modifiersState.locked    = locked;
-        m_modifiersState.group     = group;
-        m_keyboardEvents.modifiers.emit(IKeyboard::SModifiersEvent{
-            .depressed = depressed,
-            .latched   = latched,
-            .locked    = locked,
-            .group     = group,
-        });
+        updateModifiers(depressed, latched, locked, group);
     }
 
     void destroy() {
@@ -431,6 +422,28 @@ static SDispatchResult keybind2(std::string in) {
     return {};
 }
 
+static SDispatchResult keybindModmask(std::string in) {
+    CVarList2 data(std::move(in));
+    // 0 = release, 1 = press
+    bool press;
+    // See src/devices/IKeyboard.hpp : eKeyboardModifiers for modifier bitmasks
+    // 0 = none, eKeyboardModifiers is shifted to start at 1
+    uint32_t modifierMask;
+    // keycode
+    uint32_t key;
+    try {
+        press        = std::stoul(std::string{data[0]}) == 1;
+        modifierMask = std::stoul(std::string{data[1]});
+        key          = std::stoul(std::string{data[2]}) - 8; // xkb offset
+    } catch (...) { return {.success = false, .error = "invalid input"}; }
+
+    g_pInputManager->m_lastMods = modifierMask;
+    g_keyboard->setMods(modifierMask, 0, 0, 0);
+    g_keyboard->sendKey(key, press);
+
+    return {};
+}
+
 static SDispatchResult setMods(std::string in) {
     CVarList2 data(std::move(in));
     try {
@@ -449,6 +462,26 @@ static SDispatchResult setMods(std::string in) {
 
 static SDispatchResult nullfocus(std::string in) {
     g_pSeatManager->setKeyboardFocus(nullptr);
+    return {};
+}
+
+static SDispatchResult clearSurfaceFocus(std::string in) {
+    Desktop::focusState()->m_focusSurface.reset();
+    return {};
+}
+
+static SDispatchResult checkKeyboardFocusWindow(std::string in) {
+    const auto KBSURF = g_pSeatManager->m_state.keyboardFocus.lock();
+    if (!KBSURF)
+        return {.success = false, .error = "No keyboard focus"};
+
+    const auto PWINDOW = Desktop::focusState()->window();
+    if (!PWINDOW)
+        return {.success = false, .error = "Keyboard focus surface is not a window"};
+
+    if (PWINDOW->m_class != in)
+        return {.success = false, .error = std::format("Keyboard focus window class is '{}', expected '{}'", PWINDOW->m_class, in)};
+
     return {};
 }
 
@@ -673,6 +706,13 @@ static int luaKeybind2(lua_State* L) {
     return luaResult(L, ::keybind2(std::format("{},{},{}", press, modifier, key)));
 }
 
+static int luaKeybindMask(lua_State* L) {
+    const auto press        = (int)luaL_checkinteger(L, 1);
+    const auto modifierMask = (int)luaL_checkinteger(L, 2);
+    const auto key          = (int)luaL_checkinteger(L, 3);
+    return luaResult(L, ::keybindModmask(std::format("{},{},{}", press, modifierMask, key)));
+}
+
 static int luaSetMods(lua_State* L) {
     const auto kbIndex   = (int)luaL_checkinteger(L, 1);
     const auto depressed = (int)luaL_checkinteger(L, 2);
@@ -684,6 +724,14 @@ static int luaSetMods(lua_State* L) {
 
 static int luaNullfocus(lua_State* L) {
     return luaResult(L, ::nullfocus(""));
+}
+
+static int luaClearSurfaceFocus(lua_State* L) {
+    return luaResult(L, ::clearSurfaceFocus(""));
+}
+
+static int luaCheckKeyboardFocusWindow(lua_State* L) {
+    return luaResult(L, ::checkKeyboardFocusWindow(luaL_checkstring(L, 1)));
 }
 
 static int luaAddWindowRule(lua_State* L) {
@@ -739,8 +787,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     addLuaFn("click", ::luaClick);
     addLuaFn("keybind", ::luaKeybind);
     addLuaFn("keybind2", ::luaKeybind2);
+    addLuaFn("keybind_modmask", ::luaKeybindMask);
     addLuaFn("set_mods", ::luaSetMods);
     addLuaFn("nullfocus", ::luaNullfocus);
+    addLuaFn("clear_surface_focus", ::luaClearSurfaceFocus);
+    addLuaFn("check_keyboard_focus_window", ::luaCheckKeyboardFocusWindow);
     addLuaFn("add_window_rule", ::luaAddWindowRule);
     addLuaFn("check_window_rule", ::luaCheckWindowRule);
     addLuaFn("add_layer_rule", ::luaAddLayerRule);

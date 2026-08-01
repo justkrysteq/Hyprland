@@ -1,6 +1,6 @@
 #include "../config/ConfigValue.hpp"
 #include "../config/ConfigManager.hpp"
-#include "../config/legacy/DispatcherTranslator.hpp"
+#include "../config/lua/ConfigManager.hpp"
 #include "../config/shared/actions/ConfigActions.hpp"
 #include "../devices/IKeyboard.hpp"
 #include "../managers/SeatManager.hpp"
@@ -22,6 +22,7 @@
 #include <cstring>
 
 #include <hyprutils/string/String.hpp>
+#include <hyprutils/string/Numeric.hpp>
 #include <hyprutils/utils/ScopeGuard.hpp>
 using namespace Hyprutils::String;
 
@@ -37,82 +38,6 @@ using namespace Hyprutils::String;
 #endif
 
 CKeybindManager::CKeybindManager() {
-    // initialize all dispatchers
-    // populate m_dispatchers from the legacy translator
-    for (const auto& name : {"exec",
-                             "execr",
-                             "killactive",
-                             "forcekillactive",
-                             "closewindow",
-                             "killwindow",
-                             "signal",
-                             "signalwindow",
-                             "togglefloating",
-                             "setfloating",
-                             "settiled",
-                             "workspace",
-                             "renameworkspace",
-                             "fullscreen",
-                             "fullscreenstate",
-                             "movetoworkspace",
-                             "movetoworkspacesilent",
-                             "pseudo",
-                             "movefocus",
-                             "movewindow",
-                             "swapwindow",
-                             "centerwindow",
-                             "togglegroup",
-                             "changegroupactive",
-                             "movegroupwindow",
-                             "focusmonitor",
-                             "movecursortocorner",
-                             "movecursor",
-                             "workspaceopt",
-                             "exit",
-                             "movecurrentworkspacetomonitor",
-                             "focusworkspaceoncurrentmonitor",
-                             "moveworkspacetomonitor",
-                             "togglespecialworkspace",
-                             "forcerendererreload",
-                             "resizeactive",
-                             "moveactive",
-                             "cyclenext",
-                             "focuswindowbyclass",
-                             "focuswindow",
-                             "tagwindow",
-                             "toggleswallow",
-                             "submap",
-                             "pass",
-                             "sendshortcut",
-                             "sendkeystate",
-                             "layoutmsg",
-                             "dpms",
-                             "movewindowpixel",
-                             "resizewindowpixel",
-                             "swapnext",
-                             "swapactiveworkspaces",
-                             "pin",
-                             "mouse",
-                             "bringactivetotop",
-                             "alterzorder",
-                             "focusurgentorlast",
-                             "focuscurrentorlast",
-                             "lockgroups",
-                             "lockactivegroup",
-                             "moveintogroup",
-                             "moveoutofgroup",
-                             "movewindoworgroup",
-                             "moveintoorcreategroup",
-                             "setignoregrouplock",
-                             "denywindowfromgroup",
-                             "event",
-                             "global",
-                             "setprop",
-                             "forceidle",
-                             "releaseinputcapture"}) {
-        m_dispatchers[name] = [n = std::string(name)](std::string args) -> SDispatchResult { return Config::Legacy::translator()->run(n, args); };
-    }
-
     m_scrollTimer.reset();
 
     m_longPressTimer = makeShared<CEventLoopTimer>(
@@ -125,10 +50,8 @@ CKeybindManager::CKeybindManager() {
             if (!PACTIVEKEEB->m_allowBinds)
                 return;
 
-            const auto DISPATCHER = g_pKeybindManager->m_dispatchers.find(m_lastLongPressKeybind->handler);
-
             Log::logger->log(Log::DEBUG, "Long press timeout passed, calling dispatcher.");
-            DISPATCHER->second(m_lastLongPressKeybind->arg);
+            callBindDispatcher(m_lastLongPressKeybind.lock());
         },
         nullptr);
 
@@ -148,10 +71,8 @@ CKeybindManager::CKeybindManager() {
                 if (!k || !k->enabled)
                     continue;
 
-                const auto DISPATCHER = g_pKeybindManager->m_dispatchers.find(k->handler);
-
                 Log::logger->log(Log::DEBUG, "Keybind repeat triggered, calling dispatcher.");
-                DISPATCHER->second(k->arg);
+                callBindDispatcher(k.lock());
             }
 
             self->updateTimeout(std::chrono::milliseconds(1000 / m_repeatKeyRate));
@@ -317,9 +238,9 @@ void CKeybindManager::updateXKBTranslationState() {
         fclose(KEYMAPFILE);
 
     if (!PKEYMAP) {
-        ErrorOverlay::overlay()->queueCreate("[Runtime Error] Invalid keyboard layout passed. ( rules: " + RULES + ", model: " + MODEL + ", variant: " + VARIANT +
-                                                 ", options: " + OPTIONS + ", layout: " + LAYOUT + " )",
-                                             ErrorOverlay::Colors::ERROR);
+        ErrorOverlay::overlay()->queueCreate(
+            std::format("[Runtime Error] Invalid keyboard layout passed. ( rules: {}, model: {}, variant: {}, options: {}, layout: {} )", RULES, MODEL, VARIANT, OPTIONS, LAYOUT),
+            ErrorOverlay::Colors::ERROR);
 
         Log::logger->log(Log::ERR, "[XKBTranslationState] Keyboard layout {} with variant {} (rules: {}, model: {}, options: {}) couldn't have been loaded.", rules.layout,
                          rules.variant, rules.rules, rules.model, rules.options);
@@ -485,7 +406,7 @@ bool CKeybindManager::onMouseEvent(const IPointer::SButtonEvent& e, SP<IPointer>
 
     bool       mouseBindWasActive = ensureMouseBindState();
 
-    const auto KEY_NAME = "mouse:" + std::to_string(e.button);
+    const auto KEY_NAME = std::format("mouse:{}", e.button);
 
     const auto KEY = SPressedKeyWithMods{
         .keyName            = KEY_NAME,
@@ -534,15 +455,15 @@ void CKeybindManager::resizeWithBorder(const IPointer::SButtonEvent& e) {
 }
 
 void CKeybindManager::onSwitchEvent(const std::string& switchName) {
-    handleKeybinds(0, SPressedKeyWithMods{.keyName = "switch:" + switchName, .submapAtPress = getCurrentSubmap()}, true, nullptr, nullptr);
+    handleKeybinds(0, SPressedKeyWithMods{.keyName = std::format("switch:{}", switchName), .submapAtPress = getCurrentSubmap()}, true, nullptr, nullptr);
 }
 
 void CKeybindManager::onSwitchOnEvent(const std::string& switchName) {
-    handleKeybinds(0, SPressedKeyWithMods{.keyName = "switch:on:" + switchName, .submapAtPress = getCurrentSubmap()}, true, nullptr, nullptr);
+    handleKeybinds(0, SPressedKeyWithMods{.keyName = std::format("switch:on:{}", switchName), .submapAtPress = getCurrentSubmap()}, true, nullptr, nullptr);
 }
 
 void CKeybindManager::onSwitchOffEvent(const std::string& switchName) {
-    handleKeybinds(0, SPressedKeyWithMods{.keyName = "switch:off:" + switchName, .submapAtPress = getCurrentSubmap()}, true, nullptr, nullptr);
+    handleKeybinds(0, SPressedKeyWithMods{.keyName = std::format("switch:off:{}", switchName), .submapAtPress = getCurrentSubmap()}, true, nullptr, nullptr);
 }
 
 eMultiKeyCase CKeybindManager::mkKeysymSetMatches(const std::vector<KeybindKey>& keybindKeysyms, const std::set<KeybindKey>& pressedKeysyms) {
@@ -782,8 +703,6 @@ SDispatchResult CKeybindManager::handleKeybinds(const uint32_t modmask, const SP
         const bool SPECIALDISPATCHER = k->handler == "global" || k->handler == "pass" || k->handler == "sendshortcut" || k->handler == "mouse" || k->releasePending;
         const bool SPECIALTRIGGERED  = std::ranges::find_if(m_pressedSpecialBinds, [&](const auto& other) { return other == k; }) != m_pressedSpecialBinds.end();
 
-        const auto DISPATCHER = m_dispatchers.find(k->mouse ? "mouse" : k->handler);
-
         k->releasePending = false; // reset this flag if it's set
         m_currentKeybind  = k;
 
@@ -794,22 +713,15 @@ SDispatchResult CKeybindManager::handleKeybinds(const uint32_t modmask, const SP
         else if (SPECIALDISPATCHER && pressed)
             m_pressedSpecialBinds.emplace_back(k);
 
-        // Should never happen, as we check in the ConfigManager, but oh well
-        if (DISPATCHER == m_dispatchers.end()) {
-            Log::logger->log(Log::ERR, "Invalid handler in a keybind! (handler {} does not exist)", k->handler);
-        } else {
-            // call the dispatcher
-            Log::logger->log(Log::DEBUG, "Keybind triggered, calling dispatcher ({}, {}, {}, {})", modmask, key.keyName, key.keysym, DISPATCHER->first);
+        // call the lua callback
+        {
+            Log::logger->log(Log::DEBUG, "Keybind triggered, calling dispatcher ({}, {}, {})", modmask, key.keyName, key.keysym);
 
             Config::Actions::state()->m_passPressed = sc<int>(pressed);
 
             auto submapBefore = Config::Actions::state()->m_currentSubmap;
 
-            // if the dispatchers says to pass event then we will
-            if (k->handler == "mouse")
-                res = DISPATCHER->second((pressed ? "1" : "0") + k->arg);
-            else
-                res = DISPATCHER->second(k->arg);
+            callBindDispatcher(k);
 
             Config::Actions::state()->m_passPressed = -1;
 
@@ -972,4 +884,12 @@ SDispatchResult CKeybindManager::changeMouseBindMode(const eMouseBindMode MODE) 
     }
 
     return {};
+}
+
+void CKeybindManager::callBindDispatcher(const SP<SKeybind> k) {
+    // if the dispatchers says to pass event then we will
+    // FIXME: now that we got rid of legacy this needs to be fucking fixed what the fuck is this
+    auto idx = Hyprutils::String::strToNumber<int>(k->arg);
+    if (idx) // jic
+        Config::Lua::mgr()->callLuaFnBind(*idx);
 }

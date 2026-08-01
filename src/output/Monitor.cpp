@@ -24,7 +24,7 @@
 #include "../protocols/core/Compositor.hpp"
 #include "../protocols/core/DataDevice.hpp"
 #include "../render/Renderer.hpp"
-#include "../managers/EventManager.hpp"
+#include "../ipc/s2/S2.hpp"
 #include "../managers/screenshare/ScreenshareManager.hpp"
 #include "../animation/AnimationManager.hpp"
 #include "../animation/WorkspaceAnimationController.hpp"
@@ -147,20 +147,19 @@ void CMonitor::onConnect(bool noRule) {
             }
         }
 
-        timespec* ts = event.when;
+        timespec ts{};
+        auto     flags = event.flags;
 
-        if (ts && ts->tv_sec <= 2) {
+        if (event.when && event.when->tv_sec > 2) {
             // drop this timestamp, it's not valid. Likely drm is cringe. We can't push it further because
             // a) it's wrong, b) our translations aren't 100% accurate and risk underflows
-            ts = nullptr;
+            ts = *event.when;
+        } else {
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            flags &= ~Aquamarine::IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK;
         }
 
-        if (!ts) {
-            timespec mono{};
-            clock_gettime(CLOCK_MONOTONIC, &mono);
-            PROTO::presentation->onPresented(m_self.lock(), mono, event.refresh, event.seq, event.flags & ~Aquamarine::IOutput::AQ_OUTPUT_PRESENT_HW_CLOCK);
-        } else
-            PROTO::presentation->onPresented(m_self.lock(), *ts, event.refresh, event.seq, event.flags);
+        PROTO::presentation->onPresented(m_self.lock(), ts, event.refresh, event.seq, flags);
 
         if (m_zoomAnimFrameCounter < 5) {
             m_zoomAnimFrameCounter++;
@@ -197,7 +196,7 @@ void CMonitor::onConnect(bool noRule) {
 
         m_frameScheduler->onPresented();
 
-        m_events.presented.emit();
+        m_events.presented.emit(Time::fromTimespec(&ts));
     });
 
     m_listeners.destroy = m_output->events.destroy.listen([this] {
@@ -277,6 +276,7 @@ void CMonitor::onConnect(bool noRule) {
 
         m_output->state->resetExplicitFences();
         m_output->state->setEnabled(false);
+        m_usedAsyncBuffers.clear();
 
         if (!m_state.commit())
             Log::logger->log(Log::ERR, "Couldn't commit disabled state on output {}", m_name);
@@ -318,7 +318,8 @@ void CMonitor::onConnect(bool noRule) {
 
     Log::logger->log(Log::DEBUG, "Added new monitor with name {} at {:j0} with size {:j0}, pointer {:x}", m_name, m_position, m_pixelSize, rc<uintptr_t>(m_output.get()));
 
-    setupDefaultWS(monitorRule);
+    if (!isMirror())
+        setupDefaultWS(monitorRule);
 
     for (auto const& ws : State::workspaceState()->workspacesCopy()) {
         if (!valid(ws))
@@ -384,8 +385,8 @@ void CMonitor::onConnect(bool noRule) {
 
     m_events.connect.emit();
 
-    g_pEventManager->postEvent(SHyprIPCEvent{"monitoradded", m_name});
-    g_pEventManager->postEvent(SHyprIPCEvent{"monitoraddedv2", std::format("{},{},{}", m_id, m_name, m_shortDescription)});
+    IPC::Socket2::sock()->postEvent({"monitoradded", m_name});
+    IPC::Socket2::sock()->postEvent({"monitoraddedv2", std::format("{},{},{}", m_id, m_name, m_shortDescription)});
     Event::bus()->m_events.monitor.added.emit(m_self.lock());
 }
 
@@ -394,8 +395,8 @@ void CMonitor::onDisconnect(bool destroy) {
     CScopeGuard x = {[this]() {
         if (g_pCompositor->m_isShuttingDown)
             return;
-        g_pEventManager->postEvent(SHyprIPCEvent{"monitorremoved", m_name});
-        g_pEventManager->postEvent(SHyprIPCEvent{"monitorremovedv2", std::format("{},{},{}", m_id, m_name, m_shortDescription)});
+        IPC::Socket2::sock()->postEvent({"monitorremoved", m_name});
+        IPC::Socket2::sock()->postEvent({"monitorremovedv2", std::format("{},{},{}", m_id, m_name, m_shortDescription)});
         Event::bus()->m_events.monitor.removed.emit(m_self.lock());
         State::monitorLayoutController()->scheduleRecheck();
     }};
@@ -697,6 +698,7 @@ bool CMonitor::applyMonitorRuleSoft(Config::CMonitorRule&& pMonitorRule) {
     }
 
     Vector2D xfmd     = m_transform % 2 == 1 ? Vector2D{m_pixelSize.y, m_pixelSize.x} : m_pixelSize;
+    m_size            = (xfmd / m_scale).round();
     m_transformedSize = xfmd;
 
     if (m_createdByUser) {
@@ -1030,7 +1032,7 @@ bool CMonitor::applyMonitorRule(Config::CMonitorRule&& pMonitorRule) {
                     m_scale = std::round(scaleZero);
                 else {
                     Log::logger->log(Log::ERR, "Invalid scale passed to monitor, {} failed to find a clean divisor", m_scale);
-                    ErrorOverlay::overlay()->queueError("Invalid scale passed to monitor " + m_name + ", failed to find a clean divisor");
+                    ErrorOverlay::overlay()->queueError(std::format("Invalid scale passed to monitor {}, failed to find a clean divisor", m_name));
                     m_scale = getDefaultScale();
                 }
             } else {
@@ -1501,8 +1503,8 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
 
         g_layoutManager->recalculateMonitor(m_self.lock(), Layout::CLayoutManager::RECALCULATE_MONITOR_REASON_WORKSPACE_CHANGE);
 
-        g_pEventManager->postEvent(SHyprIPCEvent{"workspace", pWorkspace->m_name});
-        g_pEventManager->postEvent(SHyprIPCEvent{"workspacev2", std::format("{},{}", pWorkspace->m_id, pWorkspace->m_name)});
+        IPC::Socket2::sock()->postEvent({"workspace", pWorkspace->m_name});
+        IPC::Socket2::sock()->postEvent({"workspacev2", std::format("{},{}", pWorkspace->m_id, pWorkspace->m_name)});
         Event::bus()->m_events.workspace.active.emit(pWorkspace);
     }
 
@@ -1563,8 +1565,8 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
         if (m_activeSpecialWorkspace) {
             m_activeSpecialWorkspace->m_visible = false;
             Animation::Workspace::startAnimation(m_activeSpecialWorkspace, Animation::Workspace::ANIMATION_TYPE_OUT, false);
-            g_pEventManager->postEvent(SHyprIPCEvent{"activespecial", "," + m_name});
-            g_pEventManager->postEvent(SHyprIPCEvent{"activespecialv2", ",," + m_name});
+            IPC::Socket2::sock()->postEvent({"activespecial", std::format(",{}", m_name)});
+            IPC::Socket2::sock()->postEvent({"activespecialv2", std::format(",,{}", m_name)});
 
             // Reset layer surface state when closing special workspace
             for (auto const& ls : Desktop::layerState()->layers()) {
@@ -1612,8 +1614,8 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
         PMONITOR->m_activeSpecialWorkspace.reset();
         g_layoutManager->recalculateMonitor(PMONITOR, Layout::CLayoutManager::RECALCULATE_MONITOR_REASON_TOGGLE_SPECIAL_WORKSPACE);
         g_pHyprRenderer->damageMonitor(PMONITOR);
-        g_pEventManager->postEvent(SHyprIPCEvent{"activespecial", "," + PMONITOR->m_name});
-        g_pEventManager->postEvent(SHyprIPCEvent{"activespecialv2", ",," + PMONITOR->m_name});
+        IPC::Socket2::sock()->postEvent({"activespecial", std::format(",{}", PMONITOR->m_name)});
+        IPC::Socket2::sock()->postEvent({"activespecialv2", std::format(",,{}", PMONITOR->m_name)});
 
         // Reset layer surfaces on the old monitor when special workspace is stolen
         for (auto const& ls : Desktop::layerState()->layers()) {
@@ -1684,8 +1686,8 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
             g_pInputManager->refocus();
     }
 
-    g_pEventManager->postEvent(SHyprIPCEvent{"activespecial", pWorkspace->m_name + "," + m_name});
-    g_pEventManager->postEvent(SHyprIPCEvent{"activespecialv2", std::to_string(pWorkspace->m_id) + "," + pWorkspace->m_name + "," + m_name});
+    IPC::Socket2::sock()->postEvent({"activespecial", std::format("{},{}", pWorkspace->m_name, m_name)});
+    IPC::Socket2::sock()->postEvent({"activespecialv2", std::format("{},{},{}", pWorkspace->m_id, pWorkspace->m_name, m_name)});
 
     g_pHyprRenderer->damageMonitor(m_self.lock());
 
@@ -2064,6 +2066,12 @@ uint16_t CMonitor::isDSBlocked(bool full) {
         return reasons;
     }
 
+    if (PCANDIDATE->m_transformers.blocksDirectScanout()) {
+        reasons |= DS_BLOCK_TRANSFORM;
+        if (!full)
+            return reasons;
+    }
+
     const auto PSURFACE = PCANDIDATE->getSolitaryResource();
     if (!PSURFACE || !PSURFACE->m_current.texture || !PSURFACE->m_current.buffer) {
         reasons |= DS_BLOCK_SURFACE;
@@ -2333,6 +2341,7 @@ void CMonitor::setDPMS(bool on) {
 
                 // commit DPMS to disable the monitor, it's fully black now
                 commitDPMSState(false);
+                m_usedAsyncBuffers.clear();
             },
             true);
     }
@@ -2341,6 +2350,8 @@ void CMonitor::setDPMS(bool on) {
 void CMonitor::commitDPMSState(bool state) {
     m_output->state->resetExplicitFences();
     m_output->state->setEnabled(state);
+    if (!state)
+        m_usedAsyncBuffers.clear();
 
     if (!m_state.commit()) {
         Log::logger->log(Log::ERR, "Couldn't commit output {} for DPMS = {}, will retry.", m_name, state);
@@ -2356,6 +2367,9 @@ void CMonitor::commitDPMSState(bool state) {
 
                 m_output->state->resetExplicitFences();
                 m_output->state->setEnabled(m_dpmsStatus);
+                if (!m_dpmsStatus)
+                    m_usedAsyncBuffers.clear();
+
                 if (!m_state.commit()) {
                     Log::logger->log(Log::ERR, "Couldn't retry committing output {} for DPMS = {}", m_name, m_dpmsStatus);
                     return;
@@ -2740,8 +2754,8 @@ bool CMonitor::useFP16() {
         return true;
     };
 
-    // Auto: use FP16 if the monitor is not sRGB
-    bool        shouldUse  = *PFP16 == 1 || (*PFP16 == 2 && !isSRGB());
+    // Auto: use FP16 if the monitor is not sRGB or is 10 bit
+    bool        shouldUse  = g_pHyprRenderer->fp16Supported() && (*PFP16 == 1 || (*PFP16 == 2 && (!isSRGB() || m_enabled10bit)));
     static bool usedBefore = shouldUse;
     if (usedBefore != shouldUse) {
         usedBefore    = shouldUse;
