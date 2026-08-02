@@ -149,7 +149,7 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
     m_barWidth               = *PSTACKED ? ASSIGNEDBOX.w : (ASSIGNEDBOX.w - *PINNERGAP * (barsToDraw - 1)) / barsToDraw;
     m_barHeight              = *PSTACKED ? ((ASSIGNEDBOX.h - *POUTERGAP * *PKEEPUPPERGAP) - *POUTERGAP * (barsToDraw)) / barsToDraw : ASSIGNEDBOX.h - *POUTERGAP * *PKEEPUPPERGAP;
 
-    const auto DESIREDHEIGHT = *PSTACKED ? (ONEBARHEIGHT * m_dwGroupMembers.size()) + *POUTERGAP * *PKEEPUPPERGAP : *POUTERGAP * (1 + *PKEEPUPPERGAP) + ONEBARHEIGHT;
+    const auto DESIREDHEIGHT = (*PSTACKED ? (ONEBARHEIGHT * m_dwGroupMembers.size()) : ONEBARHEIGHT) + *POUTERGAP * *PKEEPUPPERGAP;
     if (DESIREDHEIGHT != ASSIGNEDBOX.h)
         g_pDecorationPositioner->repositionDeco(this);
 
@@ -162,7 +162,7 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         const auto WINDOWINDEX = *PSTACKED ? m_dwGroupMembers.size() - i - 1 : i;
 
         CBox       rect = {ASSIGNEDBOX.x + xoff - pMonitor->m_position.x + m_window->m_floatingOffset.x,
-                           ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - (*PONTOP ? *POUTERGAP : -*POUTERGAP) - pMonitor->m_position.y + m_window->m_floatingOffset.y,
+                           ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - *POUTERGAP - pMonitor->m_position.y + m_window->m_floatingOffset.y,
                            m_barWidth, *PINDICATORHEIGHT};
 
         rect.scale(pMonitor->m_scale).round();
@@ -543,7 +543,11 @@ CBox CHyprGroupBarDecoration::assignedBoxGlobal() {
     static auto PONTOP = CConfigValue<Config::BOOL>("group:groupbar:on_top");
 
     CBox box = m_assignedBox;
-    box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(*PONTOP ? DECORATION_EDGE_TOP : DECORATION_EDGE_BOTTOM, m_window));
+
+    if (*PONTOP)
+        box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, m_window));
+    else
+        box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_BOTTOM, m_window) + Vector2D(0, 6));
 
     const auto PWORKSPACE = m_window->m_workspace;
 
