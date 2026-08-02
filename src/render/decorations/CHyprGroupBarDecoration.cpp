@@ -54,16 +54,16 @@ SDecorationPositioningInfo CHyprGroupBarDecoration::getPositioningInfo() {
         int calcHeight = 0;
         if (*PSTACKED) {
             const auto ONEBARHEIGHT = *POUTERGAP + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0);
-            calcHeight = (ONEBARHEIGHT * m_dwGroupMembers.size()) + (*PKEEPUPPERGAP * *POUTERGAP);
+            calcHeight              = (ONEBARHEIGHT * m_dwGroupMembers.size()) + (*PKEEPUPPERGAP * *POUTERGAP);
         } else
             calcHeight = (*POUTERGAP * (1 + *PKEEPUPPERGAP)) + *PINDICATORHEIGHT + *PINDICATORGAP + (*PGRADIENTS || *PRENDERTITLES ? *PHEIGHT : 0);
 
         if (*PONTOP)
-            info.desiredExtents = {.topLeft={0, calcHeight}, .bottomRight={0, 0}};
+            info.desiredExtents = {.topLeft = {0, calcHeight}, .bottomRight = {0, 0}};
         else
-            info.desiredExtents = {.topLeft={0, 0}, .bottomRight={0, calcHeight}};
+            info.desiredExtents = {.topLeft = {0, 0}, .bottomRight = {0, calcHeight}};
     } else
-        info.desiredExtents = {.topLeft={0, 0}, .bottomRight={0, 0}};
+        info.desiredExtents = {.topLeft = {0, 0}, .bottomRight = {0, 0}};
     return info;
 }
 
@@ -162,8 +162,8 @@ void CHyprGroupBarDecoration::draw(PHLMONITOR pMonitor, float const& a) {
         const auto WINDOWINDEX = *PSTACKED ? m_dwGroupMembers.size() - i - 1 : i;
 
         CBox       rect = {ASSIGNEDBOX.x + xoff - pMonitor->m_position.x + m_window->m_floatingOffset.x,
-                           ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - *POUTERGAP - pMonitor->m_position.y + m_window->m_floatingOffset.y,
-                           m_barWidth, *PINDICATORHEIGHT};
+                           ASSIGNEDBOX.y + ASSIGNEDBOX.h - floor(yoff) - *PINDICATORHEIGHT - *POUTERGAP - pMonitor->m_position.y + m_window->m_floatingOffset.y, m_barWidth,
+                           *PINDICATORHEIGHT};
 
         rect.scale(pMonitor->m_scale).round();
 
@@ -542,7 +542,7 @@ std::string CHyprGroupBarDecoration::getDisplayName() {
 CBox CHyprGroupBarDecoration::assignedBoxGlobal() {
     static auto PONTOP = CConfigValue<Config::BOOL>("group:groupbar:on_top");
 
-    CBox box = m_assignedBox;
+    CBox        box = m_assignedBox;
 
     if (*PONTOP)
         box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, m_window));
