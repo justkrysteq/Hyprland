@@ -19,6 +19,7 @@
   hyprland-protocols,
   hyprland-guiutils,
   hyprlang,
+  hyprtoolkit,
   hyprutils,
   hyprwayland-scanner,
   hyprwire,
@@ -187,6 +188,7 @@ customStdenv.mkDerivation (finalAttrs: {
       hyprgraphics
       hyprland-protocols
       hyprlang
+      hyprtoolkit
       hyprutils
       hyprwire
       lcms2

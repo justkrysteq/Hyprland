@@ -53,6 +53,16 @@
       inputs.hyprutils.follows = "hyprutils";
     };
 
+    hyprtoolkit = {
+      url = "github:hyprwm/hyprtoolkit?ref=embedded-surface";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.systems.follows = "systems";
+      inputs.hyprutils.follows = "hyprutils";
+      inputs.aquamarine.follows = "aquamarine";
+      inputs.hyprgraphics.follows = "hyprgraphics";
+      inputs.hyprwayland-scanner.follows = "hyprwayland-scanner";
+    };
+
     hyprutils = {
       url = "github:hyprwm/hyprutils";
       inputs.nixpkgs.follows = "nixpkgs";
