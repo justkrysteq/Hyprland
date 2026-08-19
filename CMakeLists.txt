@@ -453,7 +453,8 @@ target_link_libraries(
   PkgConfig::hyprutils_dep
   PkgConfig::hyprcursor_dep
   PkgConfig::hyprgraphics_dep
-  PkgConfig::hyprtoolkit_dep
+  # PkgConfig::hyprtoolkit_dep
+  "-L/nix/store/52rz1bnvakxz4xhvy5v3nbn8h9g46xci-aquamarine-0.14.0+date=2026-08-11_f3d1804/lib -L/nix/store/8ymy84cvrzpdqhlakk3ala88594nv4dn-cairo-1.18.4/lib -L/nix/store/wjvib527dhnf4w04m1axnjv05yr60jn3-glib-2.88.1/lib -L/nix/store/sl1pkmdl48mfqgahr8mf8a2vsnpiwzib-hyprgraphics-0.5.1+date=2026-08-11_7c895c4/lib -L/nix/store/j0b8c1mqjk22zwqzgl8zcgcghfzmfrap-pango-1.57.1/lib -L/nix/store/22ki0rw437igbwgq02ln3h6mi7brzf7x-harfbuzz-13.2.1/lib -L/nix/store/bcm3mwyfja8rd2y995vcnzq06b341nnz-libglvnd-1.7.0/lib -L/nix/store/xpc4aaspl3434klaygrs3s7j57fablfh-hyprtoolkit-0.5.4+date=2026-08-10_aac6072/lib -L/nix/store/brq3rfsffqs1gf7xb6kk3a0c6471g1qh-hyprutils-0.14.0+date=2026-08-11_c157fe1/lib -lhyprtoolkit -laquamarine -lhyprgraphics -lpangocairo-1.0 -lpango-1.0 -lgobject-2.0 -lglib-2.0 -lharfbuzz -lcairo -lGLESv2 -lhyprutils"
   PkgConfig::deps
   PkgConfig::LUA
 )
