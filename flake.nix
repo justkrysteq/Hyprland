@@ -205,7 +205,7 @@
               name = "hyprland-shell";
               hardeningDisable = [ "fortify" ];
               inputsFrom = [ pkgsFor.${system}.hyprland ];
-              packages = [ pkgsFor.${system}.clang-tools ];
+              packages = [ pkgsFor.${system}.llvmPackages_23.clang-tools ];
               inherit (self.checks.${system}.pre-commit-check) shellHook;
             };
       });
